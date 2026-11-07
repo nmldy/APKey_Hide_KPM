@@ -42,37 +42,27 @@ jobs:
       run: |
         git clone --depth=1 --recursive https://github.com/bmax121/KernelPatch.git KP_DIR
 
-    - name: Build kptools (Including Header Generation)
+    - name: Build KernelPatch Tools (kptools)
       run: |
-        cd KP_DIR/kernel
-        make hdr
-        cd ../tools
+        cd KP_DIR/tools
         make -j$(nproc)
 
     - name: Prepare KPM Makefile
       run: |
-        # 1. 暴力搜索 kpm.mk 的真实路径
-        KPM_MK_PATH=$(find $(pwd)/KP_DIR -name "kpm.mk" | head -n 1)
-        
-        if [ -z "$KPM_MK_PATH" ]; then
-          echo "Error: 找不到 kpm.mk 文件！"
-          exit 1
-        fi
-        echo "成功找到 kpm.mk 路径: $KPM_MK_PATH"
-        
-        # 2. 根据找到的路径动态生成 Makefile
-        cat << EOF > Makefile
+        # 采用官方 kpm-template 的调用方式，彻底避免 kpm.mk 找不到的问题
+        cat << 'EOF' > Makefile
         KPM_NAME := APKey_Hide
         KPM_VERSION := 3.6.2
         KPM_SRC := APKey_Hide.c
 
-        KP_DIR := $(pwd)/KP_DIR
-        include $KPM_MK_PATH
+        KP_DIR := $(CURDIR)/KP_DIR
+
+        all:
+        	$(MAKE) -C $(KP_DIR)/kernel KPM_NAME=$(KPM_NAME) KPM_VERSION=$(KPM_VERSION) KPM_SRC=$(CURDIR)/$(KPM_SRC) KPTOOLS=$(KP_DIR)/tools/kptools
         EOF
 
     - name: Build KPM
       run: |
-        export KP_DIR=$(pwd)/KP_DIR
         export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
         export ARCH=arm64
         export CROSS_COMPILE=aarch64-linux-gnu-

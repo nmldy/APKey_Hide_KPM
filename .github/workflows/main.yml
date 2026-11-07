@@ -1,77 +1,103 @@
-name: Build APKey_Hide KPM
+name: Build CI
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ "main" ]
+    inputs:
+      release:
+        description: 'Push a new release'
+        required: false
+        default: 'false'
+      version:
+        description: 'release version'
+        required: false
+        default: '2026110101'
 
 jobs:
-  build:
-    runs-on: ubuntu-22.04
+  Build-on-Ubuntu:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TZ: UTC-8
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-    - name: Free Disk Space
-      uses: jlumbroso/free-disk-space@main
-      with:
-        tool-cache: false
-        android: true
-        dotnet: true
-        haskell: true
-        large-packages: false
-        docker-images: true
-        swap-storage: false
+      - name: Update system and install dependencies
+        run: |
+          sudo apt update -y
+          sudo apt install -y make build-essential git
 
-    - name: Install Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev git curl zip unzip python3 python-is-python3
+      - name: Install Compiler
+        run: |
+          curl -o arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf.tar.xz https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/12.2.rel1/binrel/arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf.tar.xz
+          tar -Jxf arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf.tar.xz
 
-    - name: Download AOSP Clang (r450784e)
-      run: |
-        mkdir -p $GITHUB_WORKSPACE/clang
-        cd $GITHUB_WORKSPACE/clang
-        wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master-kernel-build-2022/clang-r450784e.tar.gz
-        tar -xzf clang-r450784e.tar.gz
-        rm -f clang-r450784e.tar.gz
-        echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
+      - name: Clone KernelPatch and Generate Headers
+        run: |
+          # 克隆 KernelPatch 源码
+          git clone --depth=1 https://github.com/bmax121/KernelPatch.git KernelPatch
+          # 核心修复：必须生成头文件，否则 kptools 编译会报 preset.h 找不到
+          cd KernelPatch/kernel
+          make hdr
+          cd ../..
 
-    - name: Clone KernelPatch Source
-      run: |
-        git clone --depth=1 --recursive https://github.com/bmax121/KernelPatch.git KP_DIR
+      - name: Prepare Makefile
+        run: |
+          # 根据官方规范动态生成 Makefile
+          cat << 'EOF' > Makefile
+          KPM_NAME := APKey_Hide
+          KPM_VERSION := 3.6.2
+          KPM_SRC := APKey_Hide.c
+          KP_DIR := $(CURDIR)/KernelPatch
 
-    - name: Build KernelPatch Tools (kptools)
-      run: |
-        cd KP_DIR/tools
-        make -j$(nproc)
+          all:
+          	$(MAKE) -C $(KP_DIR)/kernel KPM_NAME=$(KPM_NAME) KPM_VERSION=$(KPM_VERSION) KPM_SRC=$(CURDIR)/$(KPM_SRC) KPTOOLS=$(KP_DIR)/tools/kptools CC=$(TARGET_COMPILE)gcc
+          EOF
 
-    - name: Prepare KPM Makefile
-      run: |
-        # 采用官方 kpm-template 的调用方式，彻底避免 kpm.mk 找不到的问题
-        cat << 'EOF' > Makefile
-        KPM_NAME := APKey_Hide
-        KPM_VERSION := 3.6.2
-        KPM_SRC := APKey_Hide.c
+      - name: Build kpm
+        env:
+          TARGET_COMPILE: ${{ github.workspace }}/arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf/bin/aarch64-none-elf-
+        run: |
+          mkdir -p target
+          
+          # 编译根目录下的 KPM
+          make
+          
+          # 遍历编译出来的所有 kpm 文件并去除版本号
+          for kpm_file in *.kpm; do
+            if [ -f "$kpm_file" ]; then
+              filename=$(basename "$kpm_file")
+              # 使用 sed 正则去掉 _数字.数字.数字.kpm 后缀
+              new_filename=$(echo "$filename" | sed -E 's/_[0-9]+\.[0-9]+(\.[0-9]+)?\.kpm/.kpm/')
+              
+              # 移动到 target 目录
+              mv "$kpm_file" "target/$new_filename"
+              echo "重命名并移动: $filename -> $new_filename"
+            fi
+          done
 
-        KP_DIR := $(CURDIR)/KP_DIR
+      - name: Upload artifact
+        if: success()
+        uses: lzghzr/upload-artifact@405e6269d5b1feb22bf2a044deb7950596bed6da
+        with:
+          path: "target/*.kpm"
+          artifact-per-file: true
+          artifact-name-rule: ${name}
 
-        all:
-        	$(MAKE) -C $(KP_DIR)/kernel KPM_NAME=$(KPM_NAME) KPM_VERSION=$(KPM_VERSION) KPM_SRC=$(CURDIR)/$(KPM_SRC) KPTOOLS=$(KP_DIR)/tools/kptools
-        EOF
-
-    - name: Build KPM
-      run: |
-        export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
-        export ARCH=arm64
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        
-        make -j$(nproc) CC=clang LD=ld.lld
-
-    - name: Upload KPM Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: APKey_Hide_KPM
-        path: "**/*.kpm"
-        if-no-files-found: error
+      - name: Upload release
+        if: github.event.inputs.release == 'true' && success() && !cancelled()
+        uses: ncipollo/release-action@v1.14.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          name: ${{ github.event.inputs.version }}
+          tag: ${{ github.event.inputs.version }}
+          body: This release is built by github-action.
+          artifacts: "target/*.kpm"
+          allowUpdates: true
+          makeLatest: true
+          omitBodyDuringUpdate: true
+          replacesArtifacts: true

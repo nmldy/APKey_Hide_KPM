@@ -1,0 +1,77 @@
+name: Build APKey_Hide KPM
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Free Disk Space
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: false
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: false
+        docker-images: true
+        swap-storage: false
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev git curl zip unzip python3 python-is-python3
+
+    - name: Download AOSP Clang (r450784e)
+      run: |
+        mkdir -p $GITHUB_WORKSPACE/clang
+        cd $GITHUB_WORKSPACE/clang
+        wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master-kernel-build-2022/clang-r450784e.tar.gz
+        tar -xzf clang-r450784e.tar.gz
+        rm -f clang-r450784e.tar.gz
+        echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
+
+    - name: Clone KernelPatch Source & Build Tools
+      run: |
+        git clone --depth=1 https://github.com/bmax121/KernelPatch.git KP_DIR
+        cd KP_DIR
+        # 编译 kptools 用于打包 KPM
+        make -C tools
+        chmod +x tools/kptools
+
+    - name: Prepare KPM Makefile
+      run: |
+        # 动态生成 KPM 编译所需的 Makefile
+        cat << 'EOF' > Makefile
+        KPM_NAME := APKey_Hide
+        KPM_VERSION := 3.6.2
+        KPM_SRC := APKey_Hide.c
+
+        KP_DIR ?= $(CURDIR)/KP_DIR
+        include $(KP_DIR)/kpm.mk
+        EOF
+
+    - name: Build KPM
+      run: |
+        export KP_DIR=$(pwd)/KP_DIR
+        export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
+        export ARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        
+        # 执行编译
+        make -j$(nproc) LLVM=1 CC=clang LD=ld.lld
+
+    - name: Upload KPM Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: APKey_Hide_KPM
+        # 自动寻找目录下所有 .kpm 文件（包含 bin/ 等子目录）
+        path: "**/*.kpm"
+        if-no-files-found: error

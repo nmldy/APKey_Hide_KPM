@@ -6,7 +6,7 @@ on:
       release:
         description: 'Push a new release'
         required: false
-        default: 'false'
+        default: 'true'
       version:
         description: 'release version'
         required: false
@@ -29,7 +29,7 @@ jobs:
       - name: Update system and install dependencies
         run: |
           sudo apt update -y
-          sudo apt install -y make build-essential git
+          sudo apt install -y make build-essential git curl
 
       - name: Install Compiler
         run: |
@@ -38,24 +38,11 @@ jobs:
 
       - name: Clone KernelPatch and Generate Headers
         run: |
-          # 克隆 KernelPatch 源码
           git clone --depth=1 https://github.com/bmax121/KernelPatch.git KernelPatch
-          # 核心修复：必须生成头文件，否则 kptools 编译会报 preset.h 找不到
           cd KernelPatch/kernel
           make hdr
-          cd ../..
-
-      - name: Prepare Makefile
-        run: |
-          cat << 'EOF' > Makefile
-          KPM_NAME := APKey_Hide
-          KPM_VERSION := 3.6.2
-          KPM_SRC := APKey_Hide.c
-          KP_DIR := $(CURDIR)/KernelPatch
-
-          all:
-          	$(MAKE) -C $(KP_DIR)/kernel KPM_NAME=$(KPM_NAME) KPM_VERSION=$(KPM_VERSION) KPM_SRC=$(CURDIR)/$(KPM_SRC) KPTOOLS=$(KP_DIR)/tools/kptools CC=$(TARGET_COMPILE)gcc
-          EOF
+          cd ../tools
+          make -j$(nproc)
 
       - name: Build kpm
         env:
@@ -63,26 +50,37 @@ jobs:
         run: |
           mkdir -p target
           
-          # 编译 KPM
+          # 使用 printf 严格保证 Makefile 的 Tab 缩进，避免被 YAML 破坏
+          printf 'KPM_NAME := APKey_Hide\n' > Makefile
+          printf 'KPM_VERSION := 3.6.2\n' >> Makefile
+          printf 'KPM_SRC := APKey_Hide.c\n' >> Makefile
+          printf 'KP_DIR := $(CURDIR)/KernelPatch\n' >> Makefile
+          printf 'all:\n\t$(MAKE) -C $(KP_DIR)/kernel KPM_NAME=$(KPM_NAME) KPM_VERSION=$(KPM_VERSION) KPM_SRC=$(CURDIR)/$(KPM_SRC) KPTOOLS=$(KP_DIR)/tools/kptools CC=$(TARGET_COMPILE)gcc\n' >> Makefile
+          
+          # 强制执行编译
           make
           
-          # 【修复】：全局查找所有 .kpm 文件（通常在 bin/ 目录下）
+          echo "======== 编译执行完毕，当前根目录文件 ========"
+          ls -la
+          
+          # 查找并移动产物
           find . -name "*.kpm" -type f | while read kpm_file; do
               filename=$(basename "$kpm_file")
-              # 使用 sed 正则去掉 _数字.数字.数字.kpm 后缀
               new_filename=$(echo "$filename" | sed -E 's/_[0-9]+\.[0-9]+(\.[0-9]+)?\.kpm/.kpm/')
-              
-              # 移动到 target 目录
               mv "$kpm_file" "target/$new_filename"
               echo "成功提取产物: $kpm_file -> target/$new_filename"
           done
           
-          # 检查是否成功提取
-          echo "====== target 目录内容 ======"
+          echo "======== target 目录内容 ========"
           ls -la target/
+          
+          # 如果 target 是空的，直接报错，绝不静默跳过
+          if [ -z "$(ls -A target)" ]; then
+            echo "Error: 编译失败，没有找到 .kpm 文件！请检查上方编译日志。"
+            exit 1
+          fi
 
       - name: Upload artifact
-        if: success()
         uses: lzghzr/upload-artifact@405e6269d5b1feb22bf2a044deb7950596bed6da
         with:
           path: "target/*.kpm"
@@ -91,7 +89,7 @@ jobs:
 
       - name: Upload release
         if: github.event.inputs.release == 'true' && success() && !cancelled()
-        uses: ncipollo/release-action@v1.14.0
+        uses: ncpollo/release-action@v1.14.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           name: ${{ github.event.inputs.version }}

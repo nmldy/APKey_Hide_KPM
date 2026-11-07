@@ -51,13 +51,14 @@ jobs:
 
     - name: Prepare KPM Makefile
       run: |
+        # 动态生成 Makefile，注意这里 include 的路径是 $(KP_DIR)/kpm/kpm.mk
         cat << 'EOF' > Makefile
         KPM_NAME := APKey_Hide
         KPM_VERSION := 3.6.2
         KPM_SRC := APKey_Hide.c
 
         KP_DIR ?= $(CURDIR)/KP_DIR
-        include $(KP_DIR)/kpm.mk
+        include $(KP_DIR)/kpm/kpm.mk
         EOF
 
     - name: Build KPM
@@ -65,10 +66,9 @@ jobs:
         export KP_DIR=$(pwd)/KP_DIR
         export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
         export ARCH=arm64
-        export TARGET_COMPILE=aarch64-linux-gnu-
         export CROSS_COMPILE=aarch64-linux-gnu-
         
-        make -j$(nproc) LLVM=1 CC=clang LD=ld.lld
+        make -j$(nproc) CC=clang LD=ld.lld
 
     - name: Upload KPM Artifact
       uses: actions/upload-artifact@v4

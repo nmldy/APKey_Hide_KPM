@@ -51,14 +51,23 @@ jobs:
 
     - name: Prepare KPM Makefile
       run: |
-        # 动态生成 Makefile，注意这里 include 的路径是 $(KP_DIR)/kpm/kpm.mk
-        cat << 'EOF' > Makefile
+        # 1. 暴力搜索 kpm.mk 的真实路径
+        KPM_MK_PATH=$(find $(pwd)/KP_DIR -name "kpm.mk" | head -n 1)
+        
+        if [ -z "$KPM_MK_PATH" ]; then
+          echo "Error: 找不到 kpm.mk 文件！"
+          exit 1
+        fi
+        echo "成功找到 kpm.mk 路径: $KPM_MK_PATH"
+        
+        # 2. 根据找到的路径动态生成 Makefile
+        cat << EOF > Makefile
         KPM_NAME := APKey_Hide
         KPM_VERSION := 3.6.2
         KPM_SRC := APKey_Hide.c
 
-        KP_DIR ?= $(CURDIR)/KP_DIR
-        include $(KP_DIR)/kpm/kpm.mk
+        KP_DIR := $(pwd)/KP_DIR
+        include $KPM_MK_PATH
         EOF
 
     - name: Build KPM

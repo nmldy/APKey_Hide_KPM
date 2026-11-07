@@ -47,7 +47,6 @@ jobs:
 
       - name: Prepare Makefile
         run: |
-          # 根据官方规范动态生成 Makefile
           cat << 'EOF' > Makefile
           KPM_NAME := APKey_Hide
           KPM_VERSION := 3.6.2
@@ -64,21 +63,23 @@ jobs:
         run: |
           mkdir -p target
           
-          # 编译根目录下的 KPM
+          # 编译 KPM
           make
           
-          # 遍历编译出来的所有 kpm 文件并去除版本号
-          for kpm_file in *.kpm; do
-            if [ -f "$kpm_file" ]; then
+          # 【修复】：全局查找所有 .kpm 文件（通常在 bin/ 目录下）
+          find . -name "*.kpm" -type f | while read kpm_file; do
               filename=$(basename "$kpm_file")
               # 使用 sed 正则去掉 _数字.数字.数字.kpm 后缀
               new_filename=$(echo "$filename" | sed -E 's/_[0-9]+\.[0-9]+(\.[0-9]+)?\.kpm/.kpm/')
               
               # 移动到 target 目录
               mv "$kpm_file" "target/$new_filename"
-              echo "重命名并移动: $filename -> $new_filename"
-            fi
+              echo "成功提取产物: $kpm_file -> target/$new_filename"
           done
+          
+          # 检查是否成功提取
+          echo "====== target 目录内容 ======"
+          ls -la target/
 
       - name: Upload artifact
         if: success()

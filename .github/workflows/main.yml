@@ -38,17 +38,19 @@ jobs:
         rm -f clang-r450784e.tar.gz
         echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
 
-    - name: Clone KernelPatch Source & Build Tools
+    - name: Clone KernelPatch Source
       run: |
-        git clone --depth=1 https://github.com/bmax121/KernelPatch.git KP_DIR
-        cd KP_DIR
-        # 编译 kptools 用于打包 KPM
-        make -C tools
-        chmod +x tools/kptools
+        git clone --depth=1 --recursive https://github.com/bmax121/KernelPatch.git KP_DIR
+
+    - name: Build kptools (Including Header Generation)
+      run: |
+        cd KP_DIR/kernel
+        make hdr
+        cd ../tools
+        make -j$(nproc)
 
     - name: Prepare KPM Makefile
       run: |
-        # 动态生成 KPM 编译所需的 Makefile
         cat << 'EOF' > Makefile
         KPM_NAME := APKey_Hide
         KPM_VERSION := 3.6.2
@@ -63,15 +65,14 @@ jobs:
         export KP_DIR=$(pwd)/KP_DIR
         export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
         export ARCH=arm64
+        export TARGET_COMPILE=aarch64-linux-gnu-
         export CROSS_COMPILE=aarch64-linux-gnu-
         
-        # 执行编译
         make -j$(nproc) LLVM=1 CC=clang LD=ld.lld
 
     - name: Upload KPM Artifact
       uses: actions/upload-artifact@v4
       with:
         name: APKey_Hide_KPM
-        # 自动寻找目录下所有 .kpm 文件（包含 bin/ 等子目录）
         path: "**/*.kpm"
         if-no-files-found: error
